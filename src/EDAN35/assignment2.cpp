@@ -450,7 +450,7 @@ void edan35::Assignment2::run()
 		for (size_t i = 0; i < static_cast<size_t>(lights_nb); ++i)
 		{
 			auto &lightTransform = lightTransforms[i];
-			//lightTransform.SetRotate(glm::two_pi<float>() * static_cast<float>(i) / static_cast<float>(constant::lights_nb) + 0.1f * seconds_nb, glm::vec3(0.0f, 1.0f, 0.0f));
+			// lightTransform.SetRotate(glm::two_pi<float>() * static_cast<float>(i) / static_cast<float>(constant::lights_nb) + 0.1f * seconds_nb, glm::vec3(0.0f, 1.0f, 0.0f));
 
 			auto const light_view_matrix = lightOffsetTransform.GetMatrixInverse() * lightTransform.GetMatrixInverse();
 			auto const light_world_matrix = glm::inverse(light_view_matrix) * coneScaleTransform.GetMatrix();
@@ -491,10 +491,10 @@ void edan35::Assignment2::run()
 			{
 
 				auto const &geometry = sponza_geometry[i];
-				if (geometry.name == "fabric_g") // Replace with the actual name or index
-					continue; 
+				if (i % 15 == 0) // Replace with the actual name or index
+					continue;
 				auto const &texture_data = sponza_geometry_texture_data[i];
-				//std::cout << "Object " << i << ": " << geometry.name << std::endl;
+				// std::cout << "Object " << i << ": " << geometry.name << std::endl;
 
 				utils::opengl::debug::beginDebugGroup(geometry.name);
 
