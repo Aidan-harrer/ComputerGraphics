@@ -58,6 +58,13 @@
         "unordered_map": "cpp",
         "unordered_set": "cpp",
         "variant": "cpp",
-        "algorithm": "cpp"
+        "algorithm": "cpp",
+        "atomic": "cpp",
+        "filesystem": "cpp",
+        "format": "cpp",
+        "iterator": "cpp",
+        "random": "cpp",
+        "type_traits": "cpp",
+        "utility": "cpp"
     }
 }

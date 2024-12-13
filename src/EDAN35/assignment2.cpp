@@ -23,6 +23,7 @@
 #include <cstdlib>
 #include <stdexcept>
 
+float scale = 0.001f;
 namespace constant
 {
 	constexpr uint32_t shadowmap_res_x = 1024;
@@ -349,12 +350,16 @@ void edan35::Assignment2::run()
 	int lights_nb = static_cast<int>(constant::lights_nb);
 	bool are_lights_paused = false;
 
+	float j = -6.0f;
 	for (size_t i = 0; i < static_cast<size_t>(lights_nb); ++i)
 	{
-		lightTransforms[i].SetTranslate(glm::vec3(0.0f, 1.25f, 0.0f) * constant::scale_lengths);
+		lightTransforms[i].SetTranslate(glm::vec3(j, 7.0f, 0.0f) * constant::scale_lengths);
+		lightTransforms[i].SetRotate(glm::radians(270.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+
 		lightColors[i] = glm::vec3(0.5f + 0.5f * (static_cast<float>(rand()) / static_cast<float>(RAND_MAX)),
 								   0.5f + 0.5f * (static_cast<float>(rand()) / static_cast<float>(RAND_MAX)),
 								   0.5f + 0.5f * (static_cast<float>(rand()) / static_cast<float>(RAND_MAX)));
+		j += 4;
 	}
 
 	float const lightProjectionNearPlane = 0.01f * constant::scale_lengths;
@@ -364,11 +369,10 @@ void edan35::Assignment2::run()
 											lightProjectionNearPlane, lightProjectionFarPlane);
 
 	TRSTransformf coneScaleTransform;
-	float coneRadiusScale = 0.1f;
-	coneScaleTransform.SetScale(glm::vec3(lightProjectionFarPlane * coneRadiusScale));
+	float coneRadiusScale = 0.91f;
 
 	TRSTransformf lightOffsetTransform;
-	lightOffsetTransform.SetTranslate(glm::vec3(0.0f, 0.0f, -0.4f) * constant::scale_lengths);
+	lightOffsetTransform.SetTranslate(glm::vec3(0.0f, 0.0f, 0.0f) * constant::scale_lengths);
 
 	glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 	glClearDepthf(1.0f);
@@ -397,8 +401,6 @@ void edan35::Assignment2::run()
 		auto const nowTime = std::chrono::high_resolution_clock::now();
 		auto const deltaTimeUs = std::chrono::duration_cast<std::chrono::microseconds>(nowTime - lastTime);
 		lastTime = nowTime;
-		if (!are_lights_paused)
-			seconds_nb += std::chrono::duration<decltype(seconds_nb)>(deltaTimeUs).count();
 
 		auto &io = ImGui::GetIO();
 		inputHandler.SetUICapture(io.WantCaptureMouse, io.WantCaptureKeyboard);
@@ -448,7 +450,7 @@ void edan35::Assignment2::run()
 		for (size_t i = 0; i < static_cast<size_t>(lights_nb); ++i)
 		{
 			auto &lightTransform = lightTransforms[i];
-			lightTransform.SetRotate(glm::two_pi<float>() * static_cast<float>(i) / static_cast<float>(constant::lights_nb) + 0.1f * seconds_nb, glm::vec3(0.0f, 1.0f, 0.0f));
+			//lightTransform.SetRotate(glm::two_pi<float>() * static_cast<float>(i) / static_cast<float>(constant::lights_nb) + 0.1f * seconds_nb, glm::vec3(0.0f, 1.0f, 0.0f));
 
 			auto const light_view_matrix = lightOffsetTransform.GetMatrixInverse() * lightTransform.GetMatrixInverse();
 			auto const light_world_matrix = glm::inverse(light_view_matrix) * coneScaleTransform.GetMatrix();
@@ -487,8 +489,12 @@ void edan35::Assignment2::run()
 			glUniform1i(fill_gbuffer_shader_locations.opacity_texture, 3);
 			for (std::size_t i = 0; i < sponza_geometry.size(); ++i)
 			{
+
 				auto const &geometry = sponza_geometry[i];
+				if (geometry.name == "fabric_g") // Replace with the actual name or index
+					continue; 
 				auto const &texture_data = sponza_geometry_texture_data[i];
+				//std::cout << "Object " << i << ": " << geometry.name << std::endl;
 
 				utils::opengl::debug::beginDebugGroup(geometry.name);
 
@@ -535,6 +541,7 @@ void edan35::Assignment2::run()
 
 			glEndQuery(GL_TIME_ELAPSED);
 			utils::opengl::debug::endDebugGroup();
+			coneScaleTransform.SetScale(glm::vec3(lightProjectionFarPlane * coneRadiusScale));
 
 			//
 			// Pass 2: Generate shadowmaps and accumulate lights' contribution
@@ -699,7 +706,7 @@ void edan35::Assignment2::run()
 
 			glDisable(GL_CULL_FACE);
 			glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-			for (size_t i = 0; i < ; ++i)
+			for (size_t i = 0; i < lights_nb; ++i)
 			{
 
 				cone.render(view_projection,
@@ -733,7 +740,7 @@ void edan35::Assignment2::run()
 		//
 		// Output content of the g-buffer as well as of the shadowmap, for debugging purposes
 		//
-		if (show_textures)
+		if (!show_textures)
 		{
 			bonobo::displayTexture({-0.95f, -0.95f}, {-0.55f, -0.55f}, textures[toU(Texture::GBufferDiffuse)], samplers[toU(Sampler::Linear)], {0, 1, 2, -1}, glm::uvec2(framebuffer_width, framebuffer_height));
 			bonobo::displayTexture({-0.45f, -0.95f}, {-0.05f, -0.55f}, textures[toU(Texture::GBufferSpecular)], samplers[toU(Sampler::Linear)], {0, 1, 2, -1}, glm::uvec2(framebuffer_width, framebuffer_height));
@@ -753,7 +760,6 @@ void edan35::Assignment2::run()
 		if (opened)
 		{
 			ImGui::Text("Frame CPU time: %.3f ms", std::chrono::duration<float, std::milli>(deltaTimeUs).count());
-			
 
 			ImGui::Checkbox("Copy elapsed times back to CPU", &copy_elapsed_times);
 
@@ -810,12 +816,12 @@ void edan35::Assignment2::run()
 			}
 		}
 		ImGui::End();
-
 		opened = ImGui::Begin("Scene Controls", nullptr, ImGuiWindowFlags_None);
 		if (opened)
 		{
 			ImGui::Checkbox("Pause lights", &are_lights_paused);
 			ImGui::SliderFloat("Cone Radius Scale", &coneRadiusScale, 0.1f, 5.0f);
+			ImGui::SliderFloat("Width", &scale, 0.1f, 5.0f);
 			ImGui::SliderInt("Number of lights", &lights_nb, 1, static_cast<int>(constant::lights_nb));
 			ImGui::Checkbox("Show textures", &show_textures);
 			ImGui::Checkbox("Show light cones wireframe", &show_cone_wireframe);
@@ -1131,7 +1137,6 @@ namespace
 		glUniformBlockBinding(accumulate_lights_shader, locations.ubo_CameraViewProjTransforms, toU(UBO::CameraViewProjTransforms));
 		glUniformBlockBinding(accumulate_lights_shader, locations.ubo_LightViewProjTransforms, toU(UBO::LightViewProjTransforms));
 	}
-
 	bonobo::mesh_data
 	loadCone()
 	{
@@ -1204,6 +1209,15 @@ namespace
 			0.f, 0.f, -1.f,
 			0.f, 1.f, -1.f,
 			0.f, 0.f, -1.f};
+		// for (int i = 0; i < sizeof(vertexArrayData) / (sizeof(float) * 3); i++)
+		// {
+		// 	// Scale x and y for the base vertices only
+		// 	if (vertexArrayData[i * 3 + 2] == -1.0f)
+		// 	{										 // Base vertices at z = -1.0
+		// 		vertexArrayData[i * 3 + 0] *= scale; // Scale x
+		// 		vertexArrayData[i * 3 + 1] *= scale; // Scale y
+		// 	}
+		// }
 
 		glGenVertexArrays(1, &cone.vao);
 		assert(cone.vao != 0u);
