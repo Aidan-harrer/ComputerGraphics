@@ -32,10 +32,16 @@ namespace constant
 	constexpr float scale_lengths = 100.0f; // The scene is expressed in centimetres rather than metres, hence the x100.
 
 	constexpr size_t lights_nb = 4;
-	constexpr float light_intensity = 72.0f * (scale_lengths * scale_lengths);
 	constexpr float light_angle_falloff = glm::radians(37.0f);
-}
 
+	float ambient = 0.01f;
+	glm::vec3 fog_color = glm::vec3(0.5f, 0.5f, 0.5f); // Gray fog color
+	float fog_top = 5.0f;
+	float fog_bottom = 50.0f;
+	// constexpr float light_intensity = 72.0f * (scale_lengths * scale_lengths);
+	float light_intensity = 17.0f * (scale_lengths * scale_lengths);
+	float time = glfwGetTime(); // Get the elapsed time
+}
 namespace
 {
 	template <class E>
@@ -491,8 +497,6 @@ void edan35::Assignment2::run()
 			{
 
 				auto const &geometry = sponza_geometry[i];
-				if (i % 15 == 0) // Replace with the actual name or index
-					continue;
 				auto const &texture_data = sponza_geometry_texture_data[i];
 				// std::cout << "Object " << i << ": " << geometry.name << std::endl;
 
@@ -670,8 +674,19 @@ void edan35::Assignment2::run()
 
 			glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbos[toU(FBO::Resolve)]);
 			glUseProgram(resolve_deferred_shader);
+
+			// adjustst the "thickness of the fog"
+			//  constant::fog_bottom = -5.0f + sin(constant::time) * 2.0f;
+			//  constant::fog_top = 10.0f + sin(constant::time) * 2.0f;
+
+			glUniform3fv(glGetUniformLocation(resolve_deferred_shader, "fog_color"), 1, glm::value_ptr(constant::fog_color));
+			glUniform1f(glGetUniformLocation(resolve_deferred_shader, "fog_bottom"), constant::fog_bottom);
+			glUniform1f(glGetUniformLocation(resolve_deferred_shader, "fog_top"), constant::fog_top);
+			glUniform1f(glGetUniformLocation(resolve_deferred_shader, "time"), constant::time);
+			glUniform1f(glGetUniformLocation(resolve_deferred_shader, "ambient"), constant::ambient);
+			glUniform3fv(glGetUniformLocation(resolve_deferred_shader, "camera_position"), 1, glm::value_ptr(mCamera.mWorld.GetTranslation()));
 			glViewport(0, 0, framebuffer_width, framebuffer_height);
-			// XXX: Is any clearing needed?
+			// XXX: Is any clearing needed
 
 			bind_texture_with_sampler(GL_TEXTURE_2D, 0, resolve_deferred_shader, "diffuse_texture", textures[toU(Texture::GBufferDiffuse)], samplers[toU(Sampler::Nearest)]);
 			bind_texture_with_sampler(GL_TEXTURE_2D, 1, resolve_deferred_shader, "specular_texture", textures[toU(Texture::GBufferSpecular)], samplers[toU(Sampler::Nearest)]);
@@ -821,14 +836,16 @@ void edan35::Assignment2::run()
 		{
 			ImGui::Checkbox("Pause lights", &are_lights_paused);
 			ImGui::SliderFloat("Cone Radius Scale", &coneRadiusScale, 0.1f, 5.0f);
+			ImGui::SliderFloat("Light Intensity", &constant::light_intensity, 0.0f, 10000000.0f);
 			ImGui::SliderFloat("Width", &scale, 0.1f, 5.0f);
 			ImGui::SliderInt("Number of lights", &lights_nb, 1, static_cast<int>(constant::lights_nb));
 			ImGui::Checkbox("Show textures", &show_textures);
 			ImGui::Checkbox("Show light cones wireframe", &show_cone_wireframe);
 			ImGui::Separator();
-			ImGui::Checkbox("Show basis", &show_basis);
-			ImGui::SliderFloat("Basis thickness scale", &basis_thickness_scale, 0.0f, 100.0f);
-			ImGui::SliderFloat("Basis length scale", &basis_length_scale, 0.0f, 100.0f);
+			ImGui::ColorEdit3("Fog Color", glm::value_ptr(constant::fog_color));
+			ImGui::SliderFloat("Fog Bottom", &constant::fog_bottom, -10.0f, 10.0f);
+			ImGui::SliderFloat("Fog Top", &constant::fog_top, -10.0f, 50.0f);
+			ImGui::SliderFloat("Ambient Light", &constant::ambient, 0.01f, 1.0f);
 		}
 		ImGui::End();
 
