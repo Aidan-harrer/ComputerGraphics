@@ -2,8 +2,16 @@
 // functions.
 #define GLM_FORCE_PURE 1
 
-#include "assignment2.hpp"
+#include "Assignment1/swIntersection.h"
+#include "Assignment1/swMaterial.h"
+#include "Assignment1/swRay.h"
+#include "Assignment1/swScene.h"
+#include "Assignment1/swSphere.h"
+#include "Assignment1/swVec3.h"
 
+#include "assignment2.hpp"
+#include "EDAF80/interpolation.hpp"
+// #include "parametric_shapes.hpp"
 #include "config.hpp"
 #include "core/Bonobo.h"
 #include "core/FPSCamera.h"
@@ -24,14 +32,283 @@
 #include <stdexcept>
 
 float scale = 0.001f;
+
+struct Ray
+{
+	glm::vec3 origin;	 // The starting point of the ray
+	glm::vec3 direction; // The direction the ray is traveling
+};
+
+struct Hit
+{
+	bool hit;		  // Whether the ray hit something
+	glm::vec3 point;  // The intersection point
+	glm::vec3 normal; // The normal at the intersection
+	float t;		  // The distance from the ray origin to the hit point
+};
+
 namespace constant
 {
+	bonobo::mesh_data createQuad(float const width, float const height,
+								 unsigned int const horizontal_split_count,
+								 unsigned int const vertical_split_count)
+	{
+		bonobo::mesh_data data;
+
+		// Case 1: Without subdivisions
+		if (horizontal_split_count == 0 && vertical_split_count == 0)
+		{
+			auto const vertices = std::array<glm::vec3, 4>{
+				glm::vec3(-width / 2.0f, 0.0f, -height / 2.0f),
+				glm::vec3(width / 2.0f, 0.0f, -height / 2.0f),
+				glm::vec3(-width / 2.0f, 0.0f, height / 2.0f),
+				glm::vec3(width / 2.0f, 0.0f, height / 2.0f)};
+
+			auto const index_sets = std::array<glm::uvec3, 2>{
+				glm::uvec3(0u, 1u, 2u), // First triangle
+				glm::uvec3(1u, 3u, 2u)	// Second triangle
+			};
+
+			glGenVertexArrays(1, &data.vao);
+			glBindVertexArray(data.vao);
+
+			glGenBuffers(1, &data.bo);
+			glBindBuffer(GL_ARRAY_BUFFER, data.bo);
+			glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(glm::vec3), vertices.data(), GL_STATIC_DRAW);
+
+			glEnableVertexAttribArray(static_cast<unsigned int>(bonobo::shader_bindings::vertices));
+			glVertexAttribPointer(static_cast<unsigned int>(bonobo::shader_bindings::vertices),
+								  3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3), reinterpret_cast<GLvoid const *>(0x0));
+
+			glGenBuffers(1, &data.ibo);
+			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, data.ibo);
+			glBufferData(GL_ELEMENT_ARRAY_BUFFER, index_sets.size() * sizeof(glm::uvec3), index_sets.data(), GL_STATIC_DRAW);
+
+			data.indices_nb = static_cast<GLsizei>(index_sets.size() * 3u);
+
+			glBindVertexArray(0u);
+			glBindBuffer(GL_ARRAY_BUFFER, 0u);
+			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0u);
+
+			return data;
+		}
+
+		// Case 2: With subdivisions
+		auto const vertex_count = (horizontal_split_count + 2) * (vertical_split_count + 2);
+		std::vector<glm::vec3> vertices(vertex_count);
+		std::vector<glm::vec3> texcoords(vertex_count);
+
+		float const dx = width / static_cast<float>(horizontal_split_count + 1);
+		float const dz = height / static_cast<float>(vertical_split_count + 1);
+
+		// Generate vertices and texture coordinates
+		size_t index = 0u;
+		for (unsigned int i = 0; i < horizontal_split_count + 2; ++i)
+		{
+			float x = -width / 2.0f + i * dx;
+			for (unsigned int j = 0; j < vertical_split_count + 2; ++j)
+			{
+				float z = -height / 2.0f + j * dz;
+
+				vertices[index] = glm::vec3(x, 0.0f, z);
+				texcoords[index] = glm::vec3(static_cast<float>(i) / static_cast<float>(horizontal_split_count + 1),
+											 0.0f,
+											 static_cast<float>(j) / static_cast<float>(vertical_split_count + 1));
+				++index;
+			}
+		}
+
+		// Generate index sets
+		auto const quad_count = (horizontal_split_count + 1) * (vertical_split_count + 1);
+		std::vector<glm::uvec3> index_sets(2u * quad_count);
+
+		index = 0u;
+		for (unsigned int i = 0; i < horizontal_split_count + 1; ++i)
+		{
+			for (unsigned int j = 0; j < vertical_split_count + 1; ++j)
+			{
+				index_sets[index] = glm::uvec3((i + 0u) * (vertical_split_count + 2) + (j + 0u),
+											   (i + 0u) * (vertical_split_count + 2) + (j + 1u),
+											   (i + 1u) * (vertical_split_count + 2) + (j + 1u));
+				++index;
+
+				index_sets[index] = glm::uvec3((i + 0u) * (vertical_split_count + 2) + (j + 0u),
+											   (i + 1u) * (vertical_split_count + 2) + (j + 1u),
+											   (i + 1u) * (vertical_split_count + 2) + (j + 0u));
+				++index;
+			}
+		}
+
+		// Create VAO, VBO, and IBO
+		glGenVertexArrays(1, &data.vao);
+		glBindVertexArray(data.vao);
+
+		glGenBuffers(1, &data.bo);
+		glBindBuffer(GL_ARRAY_BUFFER, data.bo);
+		glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(glm::vec3) + texcoords.size() * sizeof(glm::vec3), nullptr, GL_STATIC_DRAW);
+		glBufferSubData(GL_ARRAY_BUFFER, 0, vertices.size() * sizeof(glm::vec3), vertices.data());
+		glBufferSubData(GL_ARRAY_BUFFER, vertices.size() * sizeof(glm::vec3), texcoords.size() * sizeof(glm::vec3), texcoords.data());
+
+		glEnableVertexAttribArray(static_cast<unsigned int>(bonobo::shader_bindings::vertices));
+		glVertexAttribPointer(static_cast<unsigned int>(bonobo::shader_bindings::vertices), 3, GL_FLOAT, GL_FALSE, 0, reinterpret_cast<GLvoid const *>(0x0));
+
+		glEnableVertexAttribArray(static_cast<unsigned int>(bonobo::shader_bindings::texcoords));
+		glVertexAttribPointer(static_cast<unsigned int>(bonobo::shader_bindings::texcoords), 3, GL_FLOAT, GL_FALSE, 0, reinterpret_cast<GLvoid const *>(vertices.size() * sizeof(glm::vec3)));
+
+		glGenBuffers(1, &data.ibo);
+		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, data.ibo);
+		glBufferData(GL_ELEMENT_ARRAY_BUFFER, index_sets.size() * sizeof(glm::uvec3), index_sets.data(), GL_STATIC_DRAW);
+
+		data.indices_nb = static_cast<GLsizei>(index_sets.size() * 3u);
+
+		glBindVertexArray(0u);
+		glBindBuffer(GL_ARRAY_BUFFER, 0u);
+		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0u);
+
+		return data;
+	}
+
+	bonobo::mesh_data createDiamond(float const radius,
+									unsigned int const minor_split_count,
+									unsigned int const latitude_split_count)
+	{
+		auto const vertice_count = (minor_split_count + 2) * (latitude_split_count + 2);
+
+		auto vertices = std::vector<glm::vec3>(vertice_count);
+		auto normals = std::vector<glm::vec3>(vertice_count);
+		auto texcoords = std::vector<glm::vec3>(vertice_count);
+		auto tangents = std::vector<glm::vec3>(vertice_count);
+		auto binormals = std::vector<glm::vec3>(vertice_count);
+
+		float const d_theta = glm::two_pi<float>() / static_cast<float>(minor_split_count + 1);
+		float const d_phi = glm::pi<float>() / static_cast<float>(latitude_split_count + 1);
+
+		float const stretch_factor = 2.0f; // Stretch factor for vertical axis
+
+		// Generate vertices iteratively
+		size_t index = 0u;
+		float theta = 0.0f;
+
+		for (unsigned int i = 0u; i < minor_split_count + 2; ++i)
+		{
+			float phi = 0.0f;
+			for (unsigned int j = 0u; j < latitude_split_count + 2; ++j)
+			{
+				// Vertex position
+				float x = radius * std::sin(theta) * std::sin(phi);
+				float y = -radius * std::cos(phi) * stretch_factor; // Stretch along vertical axis
+				float z = radius * std::cos(theta) * std::sin(phi);
+
+				vertices[index] = glm::vec3(x, y, z);
+
+				// Texture coordinates
+				texcoords[index] = glm::vec3(static_cast<float>(i) / static_cast<float>(latitude_split_count),
+											 static_cast<float>(j) / static_cast<float>(minor_split_count),
+											 0.0f);
+
+				// Tangent
+				auto const t = glm::vec3(radius * std::cos(theta), 0.0f, -radius * std::sin(theta));
+				tangents[index] = glm::normalize(t);
+
+				// Binormal
+				auto const b = glm::vec3(radius * std::sin(theta) * std::cos(phi),
+										 radius * std::sin(phi),
+										 radius * std::cos(theta) * std::cos(phi));
+				binormals[index] = glm::normalize(b);
+
+				// Normal
+				auto const n = glm::normalize(glm::cross(t, b));
+				normals[index] = n;
+
+				++index;
+				phi += d_phi;
+			}
+			theta += d_theta;
+		}
+
+		// Create index array
+		auto index_sets = std::vector<glm::uvec3>(2u * (minor_split_count + 1) * (latitude_split_count + 1));
+
+		// Generate indices iteratively
+		index = 0u;
+		for (unsigned int i = 0u; i < minor_split_count + 1; ++i)
+		{
+			for (unsigned int j = 0u; j < latitude_split_count + 1; ++j)
+			{
+				index_sets[index] = glm::uvec3((minor_split_count + 2) * (i + 0u) + (j + 0u),
+											   (minor_split_count + 2) * (i + 0u) + (j + 1u),
+											   (minor_split_count + 2) * (i + 1u) + (j + 1u));
+				++index;
+
+				index_sets[index] = glm::uvec3((minor_split_count + 2) * (i + 0u) + (j + 0u),
+											   (minor_split_count + 2) * (i + 1u) + (j + 1u),
+											   (minor_split_count + 2) * (i + 1u) + (j + 0u));
+				++index;
+			}
+		}
+
+		// Setup VAO, VBO, and IBO (unchanged from original code)
+		bonobo::mesh_data data;
+		glGenVertexArrays(1, &data.vao);
+		assert(data.vao != 0u);
+		glBindVertexArray(data.vao);
+
+		auto const vertices_offset = 0u;
+		auto const vertices_size = static_cast<GLsizeiptr>(vertices.size() * sizeof(glm::vec3));
+		auto const normals_offset = vertices_size;
+		auto const normals_size = static_cast<GLsizeiptr>(normals.size() * sizeof(glm::vec3));
+		auto const texcoords_offset = normals_offset + normals_size;
+		auto const texcoords_size = static_cast<GLsizeiptr>(texcoords.size() * sizeof(glm::vec3));
+		auto const tangents_offset = texcoords_offset + texcoords_size;
+		auto const tangents_size = static_cast<GLsizeiptr>(tangents.size() * sizeof(glm::vec3));
+		auto const binormals_offset = tangents_offset + tangents_size;
+		auto const binormals_size = static_cast<GLsizeiptr>(binormals.size() * sizeof(glm::vec3));
+		auto const bo_size = static_cast<GLsizeiptr>(vertices_size + normals_size + texcoords_size + tangents_size + binormals_size);
+		glGenBuffers(1, &data.bo);
+		assert(data.bo != 0u);
+		glBindBuffer(GL_ARRAY_BUFFER, data.bo);
+		glBufferData(GL_ARRAY_BUFFER, bo_size, nullptr, GL_STATIC_DRAW);
+
+		glBufferSubData(GL_ARRAY_BUFFER, vertices_offset, vertices_size, static_cast<GLvoid const *>(vertices.data()));
+		glEnableVertexAttribArray(static_cast<unsigned int>(bonobo::shader_bindings::vertices));
+		glVertexAttribPointer(static_cast<unsigned int>(bonobo::shader_bindings::vertices), 3, GL_FLOAT, GL_FALSE, 0, reinterpret_cast<GLvoid const *>(0x0));
+
+		glBufferSubData(GL_ARRAY_BUFFER, normals_offset, normals_size, static_cast<GLvoid const *>(normals.data()));
+		glEnableVertexAttribArray(static_cast<unsigned int>(bonobo::shader_bindings::normals));
+		glVertexAttribPointer(static_cast<unsigned int>(bonobo::shader_bindings::normals), 3, GL_FLOAT, GL_FALSE, 0, reinterpret_cast<GLvoid const *>(normals_offset));
+
+		glBufferSubData(GL_ARRAY_BUFFER, texcoords_offset, texcoords_size, static_cast<GLvoid const *>(texcoords.data()));
+		glEnableVertexAttribArray(static_cast<unsigned int>(bonobo::shader_bindings::texcoords));
+		glVertexAttribPointer(static_cast<unsigned int>(bonobo::shader_bindings::texcoords), 3, GL_FLOAT, GL_FALSE, 0, reinterpret_cast<GLvoid const *>(texcoords_offset));
+
+		glBufferSubData(GL_ARRAY_BUFFER, tangents_offset, tangents_size, static_cast<GLvoid const *>(tangents.data()));
+		glEnableVertexAttribArray(static_cast<unsigned int>(bonobo::shader_bindings::tangents));
+		glVertexAttribPointer(static_cast<unsigned int>(bonobo::shader_bindings::tangents), 3, GL_FLOAT, GL_FALSE, 0, reinterpret_cast<GLvoid const *>(tangents_offset));
+
+		glBufferSubData(GL_ARRAY_BUFFER, binormals_offset, binormals_size, static_cast<GLvoid const *>(binormals.data()));
+		glEnableVertexAttribArray(static_cast<unsigned int>(bonobo::shader_bindings::binormals));
+		glVertexAttribPointer(static_cast<unsigned int>(bonobo::shader_bindings::binormals), 3, GL_FLOAT, GL_FALSE, 0, reinterpret_cast<GLvoid const *>(binormals_offset));
+
+		glBindBuffer(GL_ARRAY_BUFFER, 0u);
+
+		data.indices_nb = static_cast<GLsizei>(index_sets.size() * 3u);
+		glGenBuffers(1, &data.ibo);
+		assert(data.ibo != 0u);
+		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, data.ibo);
+		glBufferData(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(index_sets.size() * sizeof(glm::uvec3)), reinterpret_cast<GLvoid const *>(index_sets.data()), GL_STATIC_DRAW);
+
+		glBindVertexArray(0u);
+		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0u);
+
+		return data;
+	}
+
 	constexpr uint32_t shadowmap_res_x = 1024;
 	constexpr uint32_t shadowmap_res_y = 1024;
 
 	constexpr float scale_lengths = 100.0f; // The scene is expressed in centimetres rather than metres, hence the x100.
 
-	constexpr size_t lights_nb = 4;
+	constexpr size_t lights_nb = 6;
 	constexpr float light_angle_falloff = glm::radians(37.0f);
 
 	float ambient = 0.01f;
@@ -41,7 +318,38 @@ namespace constant
 	// constexpr float light_intensity = 72.0f * (scale_lengths * scale_lengths);
 	float light_intensity = 17.0f * (scale_lengths * scale_lengths);
 	float time = glfwGetTime(); // Get the elapsed time
+
+	float quad_width = 1350.0f;
+	float quad_height = 1.0f;
+
+	glm::vec3 ray_direction = glm::normalize(glm::vec3(1.0f, 0.0f, 0.0f));
+	glm::vec3 lion_left_eye = glm::vec3(-13.5, 185.0f, -10.0f);
+	glm::vec3 lion_right_eye = glm::vec3(-13.5, 185.0f, -55.0f);
+	glm::vec3 laser_target = glm::vec3(0, 0, 0);
+
+	glm::vec3 translation_left = lion_left_eye + glm::vec3(quad_width / 2.0f, 0.0f, quad_height / 2.0f);
+	glm::vec3 translation_right = lion_right_eye + glm::vec3(quad_width / 2.0f, 0.0f, quad_height / 2.0f);
 }
+bool RayIntersectsSphere(const Ray &ray, const glm::vec3 &sphere_center, float radius, Hit &hit)
+{
+	glm::vec3 oc = ray.origin - sphere_center;
+	float a = glm::dot(ray.direction, ray.direction);
+	float b = 2.0f * glm::dot(oc, ray.direction);
+	float c = glm::dot(oc, oc) - radius * radius;
+	float discriminant = b * b - 4.0f * a * c;
+
+	if (discriminant > 0.0f)
+	{
+		hit.hit = true;
+		hit.t = (-b - sqrt(discriminant)) / (2.0f * a);
+		hit.point = ray.origin + hit.t * ray.direction;
+		hit.normal = glm::normalize(hit.point - sphere_center); // Normal at the hit point
+		return true;
+	}
+	hit.hit = false;
+	return false;
+}
+
 namespace
 {
 	template <class E>
@@ -138,7 +446,9 @@ namespace
 		GLuint has_normals_texture{0u};
 		GLuint has_opacity_texture{0u};
 	};
-	void fillGBufferShaderLocations(GLuint gbuffer_shader, GBufferShaderLocations &locations);
+
+	void
+	fillGBufferShaderLocations(GLuint gbuffer_shader, GBufferShaderLocations &locations);
 
 	struct FillShadowmapShaderLocations
 	{
@@ -197,6 +507,7 @@ edan35::Assignment2::~Assignment2()
 
 void edan35::Assignment2::run()
 {
+	glm::vec3 camera_position = mCamera.mWorld.GetTranslation();
 	// Load the geometry of Sponza
 	auto const sponza_geometry = bonobo::loadObjects(config::resources_path("sponza/sponza.obj"));
 	if (sponza_geometry.empty())
@@ -234,7 +545,17 @@ void edan35::Assignment2::run()
 	}
 
 	auto const cone_geometry = loadCone();
+	auto const laser_geometry = constant::createQuad(constant::quad_width, constant::quad_height, 1000, 1000);
+	auto const diamond_geometry = constant::createDiamond(30, 100, 100);
+	auto const water_geometry = constant::createQuad(10, 10, 1000, 1000);
+	Node water;
 	Node cone;
+	Node diamond;
+	Node laser1;
+	Node laser2;
+	diamond.set_geometry(diamond_geometry);
+	laser2.set_geometry(laser_geometry);
+	laser1.set_geometry(laser_geometry);
 	cone.set_geometry(cone_geometry);
 
 	//
@@ -333,6 +654,33 @@ void edan35::Assignment2::run()
 		return;
 	}
 
+	GLuint water_shader = 0u;
+	program_manager.CreateAndRegisterProgram("water",
+											 {{ShaderType::vertex, "EDAF80/water.vert"},
+											  {ShaderType::fragment, "EDAF80/water.frag"}},
+											 water_shader);
+	if (water_shader == 0u)
+		LogError("Failed to load water shader");
+
+	auto light_position = glm::vec3(-2.0f, 4.0f, 2.0f);
+
+	float elapsed_time_s = 0.0f;
+	float wave_speed = 1.0f;
+	float wave_amplitude = 0.50f;
+
+	auto const water_uniforms = [&elapsed_time_s, &wave_speed, &wave_amplitude, &light_position, &camera_position](GLuint program)
+	{
+		glUniform3fv(glGetUniformLocation(program, "light_position"), 1, glm::value_ptr(light_position));
+		glUniform1f(glGetUniformLocation(program, "elapsed_time_s"), elapsed_time_s);
+		glUniform1f(glGetUniformLocation(program, "wave_speed"), wave_speed);
+		glUniform1f(glGetUniformLocation(program, "wave_amplitude"), wave_amplitude);
+		glUniform1f(glGetUniformLocation(program, "elapsed_time"), elapsed_time_s);
+		glUniform3fv(glGetUniformLocation(program, "camera_position"), 1, glm::value_ptr(camera_position));
+	};
+
+	GLint glowColorLoc = glGetUniformLocation(render_light_cones_shader, "glowColor");
+	GLint glowIntensityLoc = glGetUniformLocation(render_light_cones_shader, "glowIntensity");
+
 	auto const set_uniforms = [](GLuint /*program*/) {};
 
 	ViewProjTransforms camera_view_proj_transforms;
@@ -347,7 +695,16 @@ void edan35::Assignment2::run()
 		glUniform1i(glGetUniformLocation(program, name.c_str()), static_cast<GLint>(slot));
 		glBindSampler(slot, sampler);
 	};
-
+	GLuint cubemap = bonobo::loadTextureCubeMap(
+		config::resources_path("cubemaps/NissiBeach2/posx.jpg"),
+		config::resources_path("cubemaps/NissiBeach2/negx.jpg"),
+		config::resources_path("cubemaps/NissiBeach2/posy.jpg"),
+		config::resources_path("cubemaps/NissiBeach2/negy.jpg"),
+		config::resources_path("cubemaps/NissiBeach2/posz.jpg"),
+		config::resources_path("cubemaps/NissiBeach2/negz.jpg"));
+	water.set_geometry(water_geometry);
+	water.add_texture("normal_map", bonobo::loadTexture2D(config::resources_path("textures/waves.png")), GL_TEXTURE_2D);
+	water.add_texture("water_texture", cubemap, GL_TEXTURE_CUBE_MAP);
 	//
 	// Setup lights properties
 	//
@@ -357,7 +714,7 @@ void edan35::Assignment2::run()
 	bool are_lights_paused = false;
 
 	float j = -6.0f;
-	for (size_t i = 0; i < static_cast<size_t>(lights_nb); ++i)
+	for (size_t i = 0; i < 4; ++i)
 	{
 		lightTransforms[i].SetTranslate(glm::vec3(j, 7.0f, 0.0f) * constant::scale_lengths);
 		lightTransforms[i].SetRotate(glm::radians(270.0f), glm::vec3(1.0f, 0.0f, 0.0f));
@@ -367,7 +724,6 @@ void edan35::Assignment2::run()
 								   0.5f + 0.5f * (static_cast<float>(rand()) / static_cast<float>(RAND_MAX)));
 		j += 4;
 	}
-
 	float const lightProjectionNearPlane = 0.01f * constant::scale_lengths;
 	float const lightProjectionFarPlane = 20.0f * constant::scale_lengths;
 	auto lightProjection = glm::perspective(0.5f * glm::pi<float>(),
@@ -498,8 +854,6 @@ void edan35::Assignment2::run()
 
 				auto const &geometry = sponza_geometry[i];
 				auto const &texture_data = sponza_geometry_texture_data[i];
-				// std::cout << "Object " << i << ": " << geometry.name << std::endl;
-
 				utils::opengl::debug::beginDebugGroup(geometry.name);
 
 				auto const vertex_model_to_world = glm::mat4(1.0f);
@@ -710,7 +1064,15 @@ void edan35::Assignment2::run()
 		{
 			glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbos[toU(FBO::FinalWithDepth)]);
 		}
+		glUseProgram(render_light_cones_shader);
 
+		glm::vec3 glowColor = glm::vec3(0.0f, 1.0f, 0.0f);
+		glUniform3fv(glowColorLoc, 1, glm::value_ptr(glowColor));
+
+		// Set glow intensity
+		float glowIntensity = 2.5f; // Adjust for brightness
+		glUniform1f(glowIntensityLoc, glowIntensity);
+		glm::mat4 laser_model = glm::mat4(1.0f);
 		//
 		// Drawframe cones on top of the final image for debugging purposes
 		//
@@ -724,10 +1086,20 @@ void edan35::Assignment2::run()
 			for (size_t i = 0; i < lights_nb; ++i)
 			{
 
-				cone.render(view_projection,
-							lightTransforms[i].GetMatrix() * lightOffsetTransform.GetMatrix() * coneScaleTransform.GetMatrix(),
-							render_light_cones_shader, set_uniforms);
+				// cone.render(view_projection,
+				// 			lightTransforms[i].GetMatrix() * lightOffsetTransform.GetMatrix() * coneScaleTransform.GetMatrix(),
+				// 			render_light_cones_shader, set_uniforms);
 			}
+
+			laser1.render(view_projection,
+						  glm::translate(lightTransforms[4].GetMatrix(), constant::translation_left),
+						  render_light_cones_shader, set_uniforms);
+			laser2.render(view_projection,
+						  glm::translate(lightTransforms[5].GetMatrix(), constant::translation_right),
+						  render_light_cones_shader, set_uniforms);
+			diamond.render(view_projection, glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 5.0f, 0)), fallback_shader, set_uniforms);
+			water.render(view_projection, glm::scale(glm::mat4(1.0f), glm::vec3(100, 0, 1000)), water_shader, water_uniforms);
+
 			glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 			glEnable(GL_CULL_FACE);
 			utils::opengl::debug::endDebugGroup();
@@ -1226,15 +1598,6 @@ namespace
 			0.f, 0.f, -1.f,
 			0.f, 1.f, -1.f,
 			0.f, 0.f, -1.f};
-		// for (int i = 0; i < sizeof(vertexArrayData) / (sizeof(float) * 3); i++)
-		// {
-		// 	// Scale x and y for the base vertices only
-		// 	if (vertexArrayData[i * 3 + 2] == -1.0f)
-		// 	{										 // Base vertices at z = -1.0
-		// 		vertexArrayData[i * 3 + 0] *= scale; // Scale x
-		// 		vertexArrayData[i * 3 + 1] *= scale; // Scale y
-		// 	}
-		// }
 
 		glGenVertexArrays(1, &cone.vao);
 		assert(cone.vao != 0u);
@@ -1257,4 +1620,5 @@ namespace
 
 		return cone;
 	}
+
 } // namespace

@@ -17,26 +17,24 @@ in VS_OUT {
 	vec3 binormal;
 } fs_in;
 
-layout (location = 0) out vec4 geometry_diffuse;
-layout (location = 1) out vec4 geometry_specular;
-layout (location = 2) out vec4 geometry_normal;
+layout(location = 0) out vec4 geometry_diffuse;
+layout(location = 1) out vec4 geometry_specular;
+layout(location = 2) out vec4 geometry_normal;
 
-
-void main()
-{
-	if (has_opacity_texture && texture(opacity_texture, fs_in.texcoord).r < 1.0)
+void main() {
+	if(has_opacity_texture && texture(opacity_texture, fs_in.texcoord).r < 1.0)
 		discard;
 
 	// Diffuse color
-	geometry_diffuse = vec4(0.0f);
-	if (has_diffuse_texture)
+	geometry_diffuse = vec4(0.0);
+	if(has_diffuse_texture)
 		geometry_diffuse = texture(diffuse_texture, fs_in.texcoord);
 
 	// Specular color
-	geometry_specular = vec4(0.0f);
-	if (has_specular_texture)
+	geometry_specular = vec4(0.0);
+	if(has_specular_texture)
 		geometry_specular = texture(specular_texture, fs_in.texcoord);
 
 	// Worldspace normal
-	geometry_normal = vec4((fs_in.normal+1)/2,1.0);
+	geometry_normal = vec4((fs_in.normal + 1) / 2, 1.0);
 }

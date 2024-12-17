@@ -1,8 +1,10 @@
 #version 410
 
-out vec3 frag_color;
+out vec4 fragColor;
 
-void main()
-{
-	frag_color = vec3(1.0f, 0.0f, 0.0f);
+uniform vec3 glowColor;  // The color of the glow
+uniform float glowIntensity; // Intensity of the glow
+
+void main() {
+    fragColor = vec4(glowColor, 1.0f) * glowIntensity;
 }
