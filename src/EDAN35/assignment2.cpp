@@ -308,7 +308,7 @@ namespace constant
 
 	constexpr float scale_lengths = 100.0f; // The scene is expressed in centimetres rather than metres, hence the x100.
 
-	constexpr size_t lights_nb = 6;
+	constexpr size_t lights_nb = 2;
 	constexpr float light_angle_falloff = glm::radians(37.0f);
 
 	float ambient = 0.01f;
@@ -330,26 +330,59 @@ namespace constant
 	glm::vec3 translation_left = lion_left_eye + glm::vec3(quad_width / 2.0f, 0.0f, quad_height / 2.0f);
 	glm::vec3 translation_right = lion_right_eye + glm::vec3(quad_width / 2.0f, 0.0f, quad_height / 2.0f);
 }
-bool RayIntersectsSphere(const Ray &ray, const glm::vec3 &sphere_center, float radius, Hit &hit)
-{
-	glm::vec3 oc = ray.origin - sphere_center;
-	float a = glm::dot(ray.direction, ray.direction);
-	float b = 2.0f * glm::dot(oc, ray.direction);
-	float c = glm::dot(oc, oc) - radius * radius;
-	float discriminant = b * b - 4.0f * a * c;
 
-	if (discriminant > 0.0f)
-	{
-		hit.hit = true;
-		hit.t = (-b - sqrt(discriminant)) / (2.0f * a);
-		hit.point = ray.origin + hit.t * ray.direction;
-		hit.normal = glm::normalize(hit.point - sphere_center); // Normal at the hit point
-		return true;
-	}
-	hit.hit = false;
-	return false;
+bool intersectRayWithEllipsoid(const Ray &ray, const glm::vec3 &center, const glm::vec3 &radii, Hit &hit)
+{
+	// Ellipsoid parameters
+	glm::vec3 oc = ray.origin - center;
+
+	// Coefficients for quadratic equation
+	float a = glm::dot(ray.direction / radii, ray.direction / radii);
+	float b = 2.0f * glm::dot(oc / radii, ray.direction / radii);
+	float c = glm::dot(oc / radii, oc / radii) - 1.0f;
+
+	// Discriminant to check if ray intersects the ellipsoid
+	float discriminant = b * b - 4.0f * a * c;
+	if (discriminant < 0.0f)
+		return false;
+
+	// Calculate the intersection point
+	float t = (-b - sqrt(discriminant)) / (2.0f * a);
+	hit.hit = true;
+	hit.t = t;
+	hit.point = ray.origin + t * ray.direction;
+	hit.normal = glm::normalize(hit.point - center); // Surface normal at the intersection
+	return true;
 }
 
+glm::vec3 refractRay(const glm::vec3 &incidentDir, const glm::vec3 &normal, float n1, float n2)
+{
+	float ratio = n1 / n2;
+	float cosi = glm::dot(incidentDir, normal);
+	float sint2 = ratio * ratio * (1.0f - cosi * cosi);
+	if (sint2 > 1.0f)
+		return glm::vec3(0.0f); // Total internal reflection
+
+	float cost = sqrt(1.0f - sint2);
+	return ratio * incidentDir - (ratio * cosi + cost) * normal;
+}
+
+void shootRayThroughEllipsoid()
+{
+	Ray ray;
+	ray.origin = glm::vec3(0.0f, 0.0f, -10.0f);					 // Light source origin
+	ray.direction = glm::normalize(glm::vec3(0.0f, 0.0f, 1.0f)); // Direction towards the ellipsoid
+
+	Hit hit;
+	glm::vec3 ellipsoidCenter = glm::vec3(0.0f, 0.0f, 0.0f); // Ellipsoid center
+	glm::vec3 ellipsoidRadii = glm::vec3(2.0f, 2.0f, 1.0f);	 // Ellipsoid radii
+
+	if (intersectRayWithEllipsoid(ray, ellipsoidCenter, ellipsoidRadii, hit))
+	{
+		// Calculate the refraction based on Snell's Law
+		glm::vec3 refractedRay = refractRay(ray.direction, hit.normal, 1.0f, 1.5f); // Example refractive indices
+	}
+}
 namespace
 {
 	template <class E>
@@ -434,17 +467,9 @@ namespace
 		glm::vec3 baseColor;
 		float shininess;
 	};
+	void fillDiamondUniforms(GLuint diamond_shader, const DiamondUniforms &locations);
 
-	struct WaterUniforms
-	{
-		glm::vec3 lightPosition;
-		glm::vec3 cameraPosition;
-		float elapsedTime;
-		float waveSpeed;
-		float waveAmplitude;
-	};
-
-	struct GeometryTextureData
+		struct GeometryTextureData
 	{
 		GLuint diffuse_texture_id{0u};
 		GLuint specular_texture_id{0u};
@@ -515,14 +540,14 @@ void setDiamondUniforms(GLuint program, const DiamondUniforms &uniforms)
 	glUniform3fv(glGetUniformLocation(program, "baseColor"), 1, glm::value_ptr(uniforms.baseColor));
 	glUniform1f(glGetUniformLocation(program, "shininess"), uniforms.shininess);
 }
-void setWaterUniforms(GLuint program, const WaterUniforms &uniforms)
-{
-	glUniform3fv(glGetUniformLocation(program, "light_position"), 1, glm::value_ptr(uniforms.lightPosition));
-	glUniform1f(glGetUniformLocation(program, "elapsed_time"), uniforms.elapsedTime);
-	glUniform1f(glGetUniformLocation(program, "wave_speed"), uniforms.waveSpeed);
-	glUniform1f(glGetUniformLocation(program, "wave_amplitude"), uniforms.waveAmplitude);
-	glUniform3fv(glGetUniformLocation(program, "camera_position"), 1, glm::value_ptr(uniforms.cameraPosition));
-}
+// void setWaterUniforms(GLuint program, const WaterUniforms &uniforms)
+// {
+// 	glUniform3fv(glGetUniformLocation(program, "light_position"), 1, glm::value_ptr(uniforms.lightPosition));
+// 	glUniform1f(glGetUniformLocation(program, "elapsed_time"), uniforms.elapsedTime);
+// 	glUniform1f(glGetUniformLocation(program, "wave_speed"), uniforms.waveSpeed);
+// 	glUniform1f(glGetUniformLocation(program, "wave_amplitude"), uniforms.waveAmplitude);
+// 	glUniform3fv(glGetUniformLocation(program, "camera_position"), 1, glm::value_ptr(uniforms.cameraPosition));
+// }
 
 edan35::Assignment2::Assignment2(WindowManager &windowManager) : mCamera(0.5f * glm::half_pi<float>(),
 																		 static_cast<float>(config::resolution_x) / static_cast<float>(config::resolution_y),
@@ -586,20 +611,11 @@ void edan35::Assignment2::run()
 		}
 		sponza_geometry_texture_data.emplace_back(std::move(data));
 	}
-	
+
 	auto const cone_geometry = loadCone();
 	auto const laser_geometry = constant::createQuad(constant::quad_width, constant::quad_height, 1000, 1000);
 	auto const diamond_geometry = constant::createDiamond(15, 50, 50);
-	auto const water_geometry = constant::createQuad(10, 10, 50, 50);
-	Node water;
-	Node cone;
-	Node diamond;
-	Node laser1;
-	Node laser2;
-	diamond.set_geometry(diamond_geometry);
-	laser2.set_geometry(laser_geometry);
-	laser1.set_geometry(laser_geometry);
-	cone.set_geometry(cone_geometry);
+	// auto const water_geometry = constant::createQuad(10, 10, 50, 50);
 
 	//
 	// Setup the camera
@@ -697,27 +713,24 @@ void edan35::Assignment2::run()
 		return;
 	}
 
-	GLuint water_shader = 0u;
-	program_manager.CreateAndRegisterProgram("water",
-											 {{ShaderType::vertex, "EDAF80/water.vert"},
-											  {ShaderType::fragment, "EDAF80/water.frag"}},
-											 water_shader);
-	if (water_shader == 0u)
+	GLuint diamond_shader = 0u;
+	program_manager.CreateAndRegisterProgram("diamond shader",
+											 {{ShaderType::vertex, "EDAN35/diamond.vert"},
+											  {ShaderType::fragment, "EDAN35/diamond.frag"}},
+											 diamond_shader);
+	if (diamond_shader == 0u)
 		LogError("Failed to load water shader");
 
-	glm::mat4 diamond_model_matrix = glm::mat4(1.0f);
+	Node diamond;
+	diamond.set_geometry(diamond_geometry);
+
+	glm::mat4 diamond_model_matrix = constant::diamond_model_matrix;
 	glm::vec3 lightColor = glm::vec3(255, 255, 255);
 	glm::vec3 diamondColor = glm::vec3(255, 255, 255);
-	GLuint diamond_shader = 0u;
 
 	glm::mat4 view_projection = glm::mat4(1.0f);
 	glm::mat4 view_projection_inverse = glm::mat4(1.0f);
 	float shininess = 300.0f;
-	program_manager.CreateAndRegisterProgram("diamond",
-											 {{ShaderType::vertex, "EDAN35/diamond.vert"},
-
-											  {ShaderType::fragment, "EDAN35/diamond.frag"}},
-											 diamond_shader);
 
 	DiamondUniforms diamond_uniforms = {
 		diamond_model_matrix,	  // modelMatrix
@@ -737,15 +750,7 @@ void edan35::Assignment2::run()
 	float wave_speed = 1.0f;
 	float wave_amplitude = 0.50f;
 
-	WaterUniforms water_uniforms = {
-		light_position,	 // lightPosition
-		camera_position, // cameraPosition
-		elapsed_time,	 // elapsedTime
-		wave_speed,		 // waveSpeed
-		wave_amplitude	 // waveAmplitude
-	};
-
-	setWaterUniforms(water_shader, water_uniforms);
+	// setWaterUniforms(water_shader, water_uniforms);
 	GLint glowColorLoc = glGetUniformLocation(render_light_cones_shader, "glowColor");
 	GLint glowIntensityLoc = glGetUniformLocation(render_light_cones_shader, "glowIntensity");
 
@@ -773,9 +778,9 @@ void edan35::Assignment2::run()
 		config::resources_path("cubemaps/NissiBeach2/posz.jpg"),
 		config::resources_path("cubemaps/NissiBeach2/negz.jpg"));
 
-	water.set_geometry(water_geometry);
-	water.add_texture("normal_map", bonobo::loadTexture2D(config::resources_path("textures/waves.png")), GL_TEXTURE_2D);
-	water.add_texture("water_texture", cubemap, GL_TEXTURE_CUBE_MAP);
+	// water.set_geometry(water_geometry);
+	// water.add_texture("normal_map", bonobo::loadTexture2D(config::resources_path("textures/waves.png")), GL_TEXTURE_2D);
+	// water.add_texture("water_texture", cubemap, GL_TEXTURE_CUBE_MAP);
 	//
 	// Setup lights properties
 	//
@@ -785,7 +790,7 @@ void edan35::Assignment2::run()
 	bool are_lights_paused = false;
 
 	float j = -6.0f;
-	for (size_t i = 0; i < 4; ++i)
+	for (size_t i = 0; i < lights_nb; ++i)
 	{
 		lightTransforms[i].SetTranslate(glm::vec3(j, 7.0f, 0.0f) * constant::scale_lengths);
 		lightTransforms[i].SetRotate(glm::radians(270.0f), glm::vec3(1.0f, 0.0f, 0.0f));
@@ -793,7 +798,7 @@ void edan35::Assignment2::run()
 		lightColors[i] = glm::vec3(0.5f + 0.5f * (static_cast<float>(rand()) / static_cast<float>(RAND_MAX)),
 								   0.5f + 0.5f * (static_cast<float>(rand()) / static_cast<float>(RAND_MAX)),
 								   0.5f + 0.5f * (static_cast<float>(rand()) / static_cast<float>(RAND_MAX)));
-		j += 4;
+		j += 12;
 	}
 	float const lightProjectionNearPlane = 0.01f * constant::scale_lengths;
 	float const lightProjectionFarPlane = 20.0f * constant::scale_lengths;
@@ -1129,45 +1134,18 @@ void edan35::Assignment2::run()
 			glEndQuery(GL_TIME_ELAPSED);
 			utils::opengl::debug::endDebugGroup();
 		}
-
-		auto const show_debug_elements = show_cone_wireframe || show_basis;
-		if (show_debug_elements)
-		{
-			glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbos[toU(FBO::FinalWithDepth)]);
-		}
-		glUseProgram(render_light_cones_shader);
-
-		glm::vec3 glowColor = glm::vec3(0.0f, 1.0f, 0.0f);
-		glUniform3fv(glowColorLoc, 1, glm::value_ptr(glowColor));
-
-		// Set glow intensity
-		float glowIntensity = 2.5f; // Adjust for brightness
-		glUniform1f(glowIntensityLoc, glowIntensity);
-		glm::mat4 laser_model = glm::mat4(1.0f);
-		//
-		// Drawframe cones on top of the final image for debugging purposes
-		//
-		glBeginQuery(GL_TIME_ELAPSED, elapsed_time_queries[toU(ElapsedTimeQuery::ConeWireframe)]);
-		utils::opengl::debug::beginDebugGroup("Draw cone wireframe");
-
 		glDisable(GL_CULL_FACE);
 		glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-
-		// laser1.render(mCamera.GetWorldToClipMatrix(),
-		// 			  glm::translate(lightTransforms[4].GetMatrix(), constant::translation_left),
-		// 			  render_light_cones_shader, set_uniforms);
-		// laser2.render(mCamera.GetWorldToClipMatrix(),
-		// 			  glm::translate(lightTransforms[5].GetMatrix(), constant::translation_right),
-		// 			  render_light_cones_shader, set_uniforms);
 
 		glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 		glEnable(GL_CULL_FACE);
 		utils::opengl::debug::endDebugGroup();
 
 		glUseProgram(diamond_shader);
-		diamond.render(mCamera.GetWorldToClipMatrix(), glm::rotate(diamond_model_matrix, 200.0f, glm::vec3(1.0f, 0.0f, 0.0f)), fallback_shader, set_uniforms);
+		diamond.render(mCamera.GetWorldToClipMatrix(), glm::rotate(constant::diamond_model_matrix, 200.0f, glm::vec3(1.0f, 0.0f, 0.0f)),fallback_shader,set_uniforms);
 
-		glUseProgram(water_shader);
+
+		// glUseProgram(water_shader);
 		// water.render(mCamera.GetWorldToClipMatrix(), glm::scale(glm::mat4(1.0f), glm::vec3(100, 0, 1000)), water_shader, set_uniforms);
 
 		glEndQuery(GL_TIME_ELAPSED);
@@ -1177,11 +1155,6 @@ void edan35::Assignment2::run()
 
 		// If the basis and cone wireframe were not shown, FBO::Resolve
 		// is still bound so there is no need to rebind it.
-		if (show_debug_elements)
-		{
-			glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbos[toU(FBO::Resolve)]);
-		}
-
 		//
 		// Output content of the g-buffer as well as of the shadowmap, for debugging purposes
 		//
@@ -1560,6 +1533,18 @@ namespace
 		locations.has_opacity_texture = glGetUniformLocation(shadowmap_shader, "has_opacity_texture");
 
 		glUniformBlockBinding(shadowmap_shader, locations.ubo_LightViewProjTransforms, toU(UBO::LightViewProjTransforms));
+	}
+	void setDiamondUniforms(GLuint program, const DiamondUniforms &uniforms)
+	{
+		glUniformMatrix4fv(glGetUniformLocation(program, "model"), 1, GL_FALSE, glm::value_ptr(uniforms.modelMatrix));
+		glUniformMatrix4fv(glGetUniformLocation(program, "view"), 1, GL_FALSE, glm::value_ptr(uniforms.viewProjectionMatrix));
+		glUniformMatrix4fv(glGetUniformLocation(program, "projection"), 1, GL_FALSE, glm::value_ptr(uniforms.projectionMatrix));
+
+		glUniform3fv(glGetUniformLocation(program, "lightPosition"), 1, glm::value_ptr(uniforms.lightPosition));
+		glUniform3fv(glGetUniformLocation(program, "viewPosition"), 1, glm::value_ptr(uniforms.cameraPosition));
+		glUniform3fv(glGetUniformLocation(program, "lightColor"), 1, glm::value_ptr(uniforms.lightColor));
+		glUniform3fv(glGetUniformLocation(program, "baseColor"), 1, glm::value_ptr(uniforms.baseColor));
+		glUniform1f(glGetUniformLocation(program, "shininess"), uniforms.shininess);
 	}
 
 	void fillAccumulateLightsShaderLocations(GLuint accumulate_lights_shader, AccumulateLightsShaderLocations &locations)
