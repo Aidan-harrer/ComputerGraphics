@@ -321,7 +321,7 @@ namespace constant
 
 	float quad_width = 1350.0f;
 	float quad_height = 1.0f;
-
+	glm::mat4 diamond_model_matrix = glm::scale(glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 200.0f, -25.0)), glm::vec3(2, 2, 2));
 	glm::vec3 ray_direction = glm::normalize(glm::vec3(1.0f, 0.0f, 0.0f));
 	glm::vec3 lion_left_eye = glm::vec3(-13.5, 185.0f, -10.0f);
 	glm::vec3 lion_right_eye = glm::vec3(-13.5, 185.0f, -55.0f);
@@ -423,6 +423,26 @@ namespace
 		glm::mat4 view_projection = glm::mat4(1.0f);
 		glm::mat4 view_projection_inverse = glm::mat4(1.0f);
 	};
+	struct DiamondUniforms
+	{
+		glm::mat4 modelMatrix;
+		glm::mat4 viewProjectionMatrix;
+		glm::mat4 projectionMatrix;
+		glm::vec3 lightPosition;
+		glm::vec3 cameraPosition;
+		glm::vec3 lightColor;
+		glm::vec3 baseColor;
+		float shininess;
+	};
+
+	struct WaterUniforms
+	{
+		glm::vec3 lightPosition;
+		glm::vec3 cameraPosition;
+		float elapsedTime;
+		float waveSpeed;
+		float waveAmplitude;
+	};
 
 	struct GeometryTextureData
 	{
@@ -483,6 +503,26 @@ namespace
 
 	bonobo::mesh_data loadCone();
 } // namespace
+void setDiamondUniforms(GLuint program, const DiamondUniforms &uniforms)
+{
+	glUniformMatrix4fv(glGetUniformLocation(program, "model"), 1, GL_FALSE, glm::value_ptr(uniforms.modelMatrix));
+	glUniformMatrix4fv(glGetUniformLocation(program, "view"), 1, GL_FALSE, glm::value_ptr(uniforms.viewProjectionMatrix));
+	glUniformMatrix4fv(glGetUniformLocation(program, "projection"), 1, GL_FALSE, glm::value_ptr(uniforms.projectionMatrix));
+
+	glUniform3fv(glGetUniformLocation(program, "lightPosition"), 1, glm::value_ptr(uniforms.lightPosition));
+	glUniform3fv(glGetUniformLocation(program, "viewPosition"), 1, glm::value_ptr(uniforms.cameraPosition));
+	glUniform3fv(glGetUniformLocation(program, "lightColor"), 1, glm::value_ptr(uniforms.lightColor));
+	glUniform3fv(glGetUniformLocation(program, "baseColor"), 1, glm::value_ptr(uniforms.baseColor));
+	glUniform1f(glGetUniformLocation(program, "shininess"), uniforms.shininess);
+}
+void setWaterUniforms(GLuint program, const WaterUniforms &uniforms)
+{
+	glUniform3fv(glGetUniformLocation(program, "light_position"), 1, glm::value_ptr(uniforms.lightPosition));
+	glUniform1f(glGetUniformLocation(program, "elapsed_time"), uniforms.elapsedTime);
+	glUniform1f(glGetUniformLocation(program, "wave_speed"), uniforms.waveSpeed);
+	glUniform1f(glGetUniformLocation(program, "wave_amplitude"), uniforms.waveAmplitude);
+	glUniform3fv(glGetUniformLocation(program, "camera_position"), 1, glm::value_ptr(uniforms.cameraPosition));
+}
 
 edan35::Assignment2::Assignment2(WindowManager &windowManager) : mCamera(0.5f * glm::half_pi<float>(),
 																		 static_cast<float>(config::resolution_x) / static_cast<float>(config::resolution_y),
@@ -507,6 +547,7 @@ edan35::Assignment2::~Assignment2()
 
 void edan35::Assignment2::run()
 {
+
 	glm::vec3 camera_position = mCamera.mWorld.GetTranslation();
 	// Load the geometry of Sponza
 	auto const sponza_geometry = bonobo::loadObjects(config::resources_path("sponza/sponza.obj"));
@@ -515,6 +556,8 @@ void edan35::Assignment2::run()
 		LogError("Failed to load the Sponza model");
 		return;
 	}
+	// Create a perspective projection matrix
+	glm::mat4 projectionMatrix = mCamera.GetViewToClipMatrix();
 	std::vector<GeometryTextureData> sponza_geometry_texture_data;
 	sponza_geometry_texture_data.reserve(sponza_geometry.size());
 	for (auto const &geometry : sponza_geometry)
@@ -543,11 +586,11 @@ void edan35::Assignment2::run()
 		}
 		sponza_geometry_texture_data.emplace_back(std::move(data));
 	}
-
+	
 	auto const cone_geometry = loadCone();
 	auto const laser_geometry = constant::createQuad(constant::quad_width, constant::quad_height, 1000, 1000);
-	auto const diamond_geometry = constant::createDiamond(30, 100, 100);
-	auto const water_geometry = constant::createQuad(10, 10, 1000, 1000);
+	auto const diamond_geometry = constant::createDiamond(15, 50, 50);
+	auto const water_geometry = constant::createQuad(10, 10, 50, 50);
 	Node water;
 	Node cone;
 	Node diamond;
@@ -662,26 +705,53 @@ void edan35::Assignment2::run()
 	if (water_shader == 0u)
 		LogError("Failed to load water shader");
 
-	auto light_position = glm::vec3(-2.0f, 4.0f, 2.0f);
+	glm::mat4 diamond_model_matrix = glm::mat4(1.0f);
+	glm::vec3 lightColor = glm::vec3(255, 255, 255);
+	glm::vec3 diamondColor = glm::vec3(255, 255, 255);
+	GLuint diamond_shader = 0u;
 
-	float elapsed_time_s = 0.0f;
+	glm::mat4 view_projection = glm::mat4(1.0f);
+	glm::mat4 view_projection_inverse = glm::mat4(1.0f);
+	float shininess = 300.0f;
+	program_manager.CreateAndRegisterProgram("diamond",
+											 {{ShaderType::vertex, "EDAN35/diamond.vert"},
+
+											  {ShaderType::fragment, "EDAN35/diamond.frag"}},
+											 diamond_shader);
+
+	DiamondUniforms diamond_uniforms = {
+		diamond_model_matrix,	  // modelMatrix
+		view_projection,		  // viewProjectionMatrix
+		projectionMatrix,		  // projectionMatrix
+		constant::lion_right_eye, // lightPosition
+		camera_position,		  // cameraPosition
+		lightColor,				  // lightColor
+		diamondColor,			  // baseColor
+		shininess				  // shininess
+	};
+
+	setDiamondUniforms(diamond_shader, diamond_uniforms);
+	auto light_position = glm::vec3(0.0f, 40.0f, 2.0f);
+
+	auto elapsed_time = 0.0f;
 	float wave_speed = 1.0f;
 	float wave_amplitude = 0.50f;
 
-	auto const water_uniforms = [&elapsed_time_s, &wave_speed, &wave_amplitude, &light_position, &camera_position](GLuint program)
-	{
-		glUniform3fv(glGetUniformLocation(program, "light_position"), 1, glm::value_ptr(light_position));
-		glUniform1f(glGetUniformLocation(program, "elapsed_time_s"), elapsed_time_s);
-		glUniform1f(glGetUniformLocation(program, "wave_speed"), wave_speed);
-		glUniform1f(glGetUniformLocation(program, "wave_amplitude"), wave_amplitude);
-		glUniform1f(glGetUniformLocation(program, "elapsed_time"), elapsed_time_s);
-		glUniform3fv(glGetUniformLocation(program, "camera_position"), 1, glm::value_ptr(camera_position));
+	WaterUniforms water_uniforms = {
+		light_position,	 // lightPosition
+		camera_position, // cameraPosition
+		elapsed_time,	 // elapsedTime
+		wave_speed,		 // waveSpeed
+		wave_amplitude	 // waveAmplitude
 	};
 
+	setWaterUniforms(water_shader, water_uniforms);
 	GLint glowColorLoc = glGetUniformLocation(render_light_cones_shader, "glowColor");
 	GLint glowIntensityLoc = glGetUniformLocation(render_light_cones_shader, "glowIntensity");
 
-	auto const set_uniforms = [](GLuint /*program*/) {};
+	auto const set_uniforms = [](GLuint /*program*/) {
+
+	};
 
 	ViewProjTransforms camera_view_proj_transforms;
 	std::array<ViewProjTransforms, constant::lights_nb> light_view_proj_transforms;
@@ -702,6 +772,7 @@ void edan35::Assignment2::run()
 		config::resources_path("cubemaps/NissiBeach2/negy.jpg"),
 		config::resources_path("cubemaps/NissiBeach2/posz.jpg"),
 		config::resources_path("cubemaps/NissiBeach2/negz.jpg"));
+
 	water.set_geometry(water_geometry);
 	water.add_texture("normal_map", bonobo::loadTexture2D(config::resources_path("textures/waves.png")), GL_TEXTURE_2D);
 	water.add_texture("water_texture", cubemap, GL_TEXTURE_CUBE_MAP);
@@ -1077,45 +1148,32 @@ void edan35::Assignment2::run()
 		// Drawframe cones on top of the final image for debugging purposes
 		//
 		glBeginQuery(GL_TIME_ELAPSED, elapsed_time_queries[toU(ElapsedTimeQuery::ConeWireframe)]);
-		if (show_cone_wireframe)
-		{
-			utils::opengl::debug::beginDebugGroup("Draw cone wireframe");
+		utils::opengl::debug::beginDebugGroup("Draw cone wireframe");
 
-			glDisable(GL_CULL_FACE);
-			glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-			for (size_t i = 0; i < lights_nb; ++i)
-			{
+		glDisable(GL_CULL_FACE);
+		glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
 
-				// cone.render(view_projection,
-				// 			lightTransforms[i].GetMatrix() * lightOffsetTransform.GetMatrix() * coneScaleTransform.GetMatrix(),
-				// 			render_light_cones_shader, set_uniforms);
-			}
+		// laser1.render(mCamera.GetWorldToClipMatrix(),
+		// 			  glm::translate(lightTransforms[4].GetMatrix(), constant::translation_left),
+		// 			  render_light_cones_shader, set_uniforms);
+		// laser2.render(mCamera.GetWorldToClipMatrix(),
+		// 			  glm::translate(lightTransforms[5].GetMatrix(), constant::translation_right),
+		// 			  render_light_cones_shader, set_uniforms);
 
-			laser1.render(view_projection,
-						  glm::translate(lightTransforms[4].GetMatrix(), constant::translation_left),
-						  render_light_cones_shader, set_uniforms);
-			laser2.render(view_projection,
-						  glm::translate(lightTransforms[5].GetMatrix(), constant::translation_right),
-						  render_light_cones_shader, set_uniforms);
-			diamond.render(view_projection, glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 5.0f, 0)), fallback_shader, set_uniforms);
-			water.render(view_projection, glm::scale(glm::mat4(1.0f), glm::vec3(100, 0, 1000)), water_shader, water_uniforms);
+		glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+		glEnable(GL_CULL_FACE);
+		utils::opengl::debug::endDebugGroup();
 
-			glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-			glEnable(GL_CULL_FACE);
-			utils::opengl::debug::endDebugGroup();
-		}
+		glUseProgram(diamond_shader);
+		diamond.render(mCamera.GetWorldToClipMatrix(), glm::rotate(diamond_model_matrix, 200.0f, glm::vec3(1.0f, 0.0f, 0.0f)), fallback_shader, set_uniforms);
+
+		glUseProgram(water_shader);
+		// water.render(mCamera.GetWorldToClipMatrix(), glm::scale(glm::mat4(1.0f), glm::vec3(100, 0, 1000)), water_shader, set_uniforms);
+
 		glEndQuery(GL_TIME_ELAPSED);
 
 		utils::opengl::debug::beginDebugGroup("Draw GUI");
 		glBeginQuery(GL_TIME_ELAPSED, elapsed_time_queries[toU(ElapsedTimeQuery::GUI)]);
-
-		//
-		// Display 3D helpers
-		//
-		if (show_basis)
-		{
-			bonobo::renderBasis(basis_thickness_scale, basis_length_scale, mCamera.GetWorldToClipMatrix());
-		}
 
 		// If the basis and cone wireframe were not shown, FBO::Resolve
 		// is still bound so there is no need to rebind it.
